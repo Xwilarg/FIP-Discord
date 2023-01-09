@@ -10,7 +10,6 @@
 
   <ItemGroup>
     <PackageReference Include="Discord.Net" Version="3.9.0" />
-    <PackageReference Include="DSharpPlus.VoiceNext.Natives" Version="1.0.0" />
   </ItemGroup>
 
 </Project>

@@ -10,7 +10,7 @@ namespace FIP
     {
         private readonly DiscordSocketClient _client = new(new DiscordSocketConfig
         {
-            GatewayIntents = GatewayIntents.Guilds
+            GatewayIntents = GatewayIntents.Guilds | GatewayIntents.GuildVoiceStates
         });
 
         public static async Task Main()
@@ -62,27 +62,27 @@ namespace FIP
                     try
                     {
                         var audioClient = await guildUser.VoiceChannel.ConnectAsync();
-                        using var ffmpeg = Process.Start(new ProcessStartInfo
+                        var ffmpeg = Process.Start(new ProcessStartInfo
                         {
                             FileName = "ffmpeg",
-                            Arguments = $"-hide_banner -loglevel panic -i \"https://icecast.radiofrance.fr/fip-midfi.mp3\" -ac 2 -f s16le -ar 48000 pipe:1",
+                            Arguments = $"-hide_banner -loglevel panic -i https://icecast.radiofrance.fr/fip-midfi.mp3 -ac 2 -f s16le -ar 48000 pipe:",
                             UseShellExecute = false,
-                            RedirectStandardOutput = true,
+                            RedirectStandardOutput = true
                         });
                         using var output = ffmpeg.StandardOutput.BaseStream;
                         using var discord = audioClient.CreatePCMStream(AudioApplication.Mixed);
                         try { await output.CopyToAsync(discord); }
-                        catch (Exception ex)
-                        {
-                            ;
-                        }
                         finally { await discord.FlushAsync(); }
                     }
                     catch (Exception ex)
                     {
-                        ;
+                        await arg.Channel.SendMessageAsync(ex.Message);
                     }
                 });
+            }
+            else if (arg.CommandName == "invite")
+            {
+                await arg.RespondAsync("https://discord.com/api/oauth2/authorize?client_id=1062043607252606976&permissions=3145728&scope=bot%20applications.commands", ephemeral: true);
             }
         }
 
@@ -100,6 +100,11 @@ namespace FIP
                         {
                             Name = "play",
                             Description = "Start playing the radio in the vocal channel where the user is"
+                        },
+                        new()
+                        {
+                            Name = "invite",
+                            Description = "Get the invite link of the bot"
                         }
                     }.Select(x => x.Build()).ToArray();
                     foreach (var cmd in commands)
