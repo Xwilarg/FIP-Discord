@@ -155,6 +155,8 @@ namespace FIP
                         {
                             await arg.Channel.SendMessageAsync("No user left in the channel, ending radio...");
                             await vChan.DisconnectAsync();
+                            _followChans.Remove(arg.Channel.Id);
+                            _audioChannels.Remove(arg.GuildId.Value);
                             timer.Enabled = false;
                         }
                     };
