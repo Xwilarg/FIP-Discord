@@ -2,6 +2,7 @@
 using Discord.Audio;
 using Discord.WebSocket;
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 
 namespace FIP
@@ -18,6 +19,9 @@ namespace FIP
             await new Program().StartAsync();
         }
 
+        private string _openRadioApiToken;
+        private HttpClient _http = new();
+
         public async Task StartAsync()
         {
             await Log.LogAsync(new LogMessage(LogSeverity.Info, "Setup", "Initialising bot"));
@@ -29,8 +33,9 @@ namespace FIP
             if (!File.Exists("Keys/Credentials.json"))
                 throw new FileNotFoundException("Missing Credentials file");
             var credentials = JsonSerializer.Deserialize<Credentials>(File.ReadAllText("Keys/Credentials.json"));
-            if (credentials == null)
-                throw new NullReferenceException("No token found");
+            if (credentials == null || credentials.BotToken == null || credentials.OpenRadioApiToken == null)
+                throw new NullReferenceException("Missing credentials");
+            _openRadioApiToken = credentials.OpenRadioApiToken;
 
             _client.Ready += Ready;
             _client.SlashCommandExecuted += SlashCommandExecuted;
@@ -38,8 +43,82 @@ namespace FIP
             await _client.LoginAsync(TokenType.Bot, credentials.BotToken);
             await _client.StartAsync();
 
+            new Thread(new ThreadStart(WatchOver)).Start();
+
             // We keep the bot online
             await Task.Delay(-1);
+        }
+
+        private readonly Dictionary<ulong, IMessageChannel> _followChans = new();
+        private readonly Dictionary<ulong, SocketVoiceChannel> _audioChannels = new();
+        private Song? _currentSong;
+        private void WatchOver()
+        {
+            while (Thread.CurrentThread.IsAlive)
+            {
+                while (_followChans.Any())
+                {
+                    var previous = _currentSong?.end;
+                    UpdateCurrentSongAsync().GetAwaiter().GetResult();
+                    if (_currentSong != null && previous != _currentSong.end)
+                    {
+                        var embed = GetSongEmbed();
+                        foreach (var chan in _followChans)
+                        {
+                            try
+                            {
+                                chan.Value.SendMessageAsync(embed: embed).GetAwaiter().GetResult();
+                            }
+                            catch { }
+                        }
+                    }
+                }
+                Thread.Sleep(200);
+            }
+        }
+
+        private async Task UpdateCurrentSongAsync()
+        {
+            TimeSpan t = DateTime.UtcNow - new DateTime(1970, 1, 1);
+            int epochTime = (int)t.TotalSeconds;
+            if (_currentSong != null && _currentSong.end > epochTime)
+            {
+                return;
+            }
+            var json = JsonSerializer.Serialize(new GraphQL
+            {
+                query = "{ live(station: FIP) { song { end, track {title albumTitle mainArtists} } } }"
+            });
+
+            var answer = await _http.PostAsync($"https://openapi.radiofrance.fr/v1/graphql?x-token={_openRadioApiToken}", new StringContent(json, Encoding.UTF8, "application/json"));
+            answer.EnsureSuccessStatusCode();
+
+            var text = await answer.Content.ReadAsStringAsync();
+            _currentSong = JsonSerializer.Deserialize<GraphQLResult>(text).data.live.song;
+        }
+
+        private Embed GetSongEmbed()
+        {
+            return new EmbedBuilder
+            {
+                Title = $"{_currentSong.track.title} by {string.Join(", ", _currentSong.track.mainArtists)}",
+                Fields = new()
+                {
+                    new()
+                    {
+                        Name = "Album",
+                        Value = _currentSong.track.albumTitle,
+                        IsInline = true
+                    },
+                    new()
+                    {
+                        Name = "Ends",
+                        Value = $"<t:{_currentSong.end}:R>",
+                        IsInline = true
+                    }
+                },
+                Color = new(227, 0, 123)
+            }.Build();
         }
 
         private async Task SlashCommandExecuted(SocketSlashCommand arg)
@@ -74,6 +153,10 @@ namespace FIP
                         }
                     };
                     timer.Start();
+                    await UpdateCurrentSongAsync();
+                    await arg.Channel.SendMessageAsync(embed: GetSongEmbed());
+                    _followChans.Add(arg.Channel.Id, arg.Channel);
+                    _audioChannels.Add(arg.GuildId!.Value, vChan);
                     try
                     {
                         var audioClient = await guildUser.VoiceChannel.ConnectAsync();
@@ -87,13 +170,40 @@ namespace FIP
                         using var output = ffmpeg.StandardOutput.BaseStream;
                         using var discord = audioClient.CreatePCMStream(AudioApplication.Mixed);
                         try { await output.CopyToAsync(discord); }
-                        finally { await discord.FlushAsync(); }
+                        finally
+                        {
+                            await discord.FlushAsync();
+                            _followChans.Remove(arg.Channel.Id);
+                            _audioChannels.Remove(arg.GuildId.Value);
+                        }
                     }
                     catch (Exception ex)
                     {
                         await arg.Channel.SendMessageAsync(ex.Message);
+                        _followChans.Remove(arg.Channel.Id);
+                        _audioChannels.Remove(arg.GuildId.Value);
                     }
                 });
+            }
+            else if (arg.CommandName == "stop")
+            {
+                if (arg.GuildId == null)
+                {
+                    await arg.RespondAsync("This command can only be done in a guild", ephemeral: true);
+                }
+                else if (!_audioChannels.ContainsKey(arg.GuildId.Value))
+                {
+                    await arg.RespondAsync("No radio was start in this server", ephemeral: true);
+                }
+                else
+                {
+                    await arg.RespondAsync("Stopping the radio...");
+                    await _audioChannels[arg.GuildId.Value].DisconnectAsync();
+                }
+            }
+            else if (arg.CommandName == "github")
+            {
+                await arg.RespondAsync("https://github.com/Xwilarg/FIP-Discord/", ephemeral: true);
             }
             else if (arg.CommandName == "invite")
             {
@@ -115,6 +225,16 @@ namespace FIP
                         {
                             Name = "play",
                             Description = "Start playing the radio in the vocal channel where the user is"
+                        },
+                        new()
+                        {
+                            Name = "stop",
+                            Description = "Stop playing the radio"
+                        },
+                        new()
+                        {
+                            Name = "github",
+                            Description = "Get the link to the source code of the bot"
                         },
                         new()
                         {
