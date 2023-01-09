@@ -4,6 +4,7 @@ using Discord.WebSocket;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Web;
 
 namespace FIP
 {
@@ -20,6 +21,7 @@ namespace FIP
         }
 
         private string _openRadioApiToken;
+        private string _lastFmApiToken;
         private HttpClient _http = new();
 
         public async Task StartAsync()
@@ -33,9 +35,10 @@ namespace FIP
             if (!File.Exists("Keys/Credentials.json"))
                 throw new FileNotFoundException("Missing Credentials file");
             var credentials = JsonSerializer.Deserialize<Credentials>(File.ReadAllText("Keys/Credentials.json"));
-            if (credentials == null || credentials.BotToken == null || credentials.OpenRadioApiToken == null)
+            if (credentials == null || credentials.BotToken == null || credentials.OpenRadioApiToken == null || credentials.LastFmApiToken == null)
                 throw new NullReferenceException("Missing credentials");
             _openRadioApiToken = credentials.OpenRadioApiToken;
+            _lastFmApiToken = credentials.LastFmApiToken;
 
             _client.Ready += Ready;
             _client.SlashCommandExecuted += SlashCommandExecuted;
@@ -62,7 +65,7 @@ namespace FIP
                     UpdateCurrentSongAsync().GetAwaiter().GetResult();
                     if (_currentSong != null && previous != _currentSong.end)
                     {
-                        var embed = GetSongEmbed();
+                        var embed = GetSongEmbedAsync().GetAwaiter().GetResult();
                         foreach (var chan in _followChans)
                         {
                             try
@@ -97,8 +100,9 @@ namespace FIP
             _currentSong = JsonSerializer.Deserialize<GraphQLResult>(text).data.live.song;
         }
 
-        private Embed GetSongEmbed()
+        private async Task<Embed> GetSongEmbedAsync()
         {
+            var lastFm = JsonSerializer.Deserialize<LastFm>(await _http.GetStringAsync($"https://ws.audioscrobbler.com/2.0/?method=track.getInfo&api_key={HttpUtility.UrlEncode(_lastFmApiToken)}&artist={_currentSong.track.mainArtists.FirstOrDefault()}&track={HttpUtility.UrlEncode(_currentSong.track.title)}&format=json"));
             return new EmbedBuilder
             {
                 Title = $"{_currentSong.track.title} by {string.Join(", ", _currentSong.track.mainArtists)}",
@@ -117,6 +121,8 @@ namespace FIP
                         IsInline = true
                     }
                 },
+                ImageUrl = lastFm?.track?.album?.image?.LastOrDefault()?.text,
+                Url = lastFm?.track?.url,
                 Color = new(227, 0, 123)
             }.Build();
         }
@@ -154,7 +160,7 @@ namespace FIP
                     };
                     timer.Start();
                     await UpdateCurrentSongAsync();
-                    await arg.Channel.SendMessageAsync(embed: GetSongEmbed());
+                    await arg.Channel.SendMessageAsync(embed: await GetSongEmbedAsync());
                     _followChans.Add(arg.Channel.Id, arg.Channel);
                     _audioChannels.Add(arg.GuildId!.Value, vChan);
                     try
