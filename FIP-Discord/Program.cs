@@ -59,6 +59,21 @@ namespace FIP
                 await arg.RespondAsync("Starting the radio...");
                 _ = Task.Run(async () =>
                 {
+                    var vChan = (SocketVoiceChannel)guildUser.VoiceChannel;
+                    var timer = new System.Timers.Timer()
+                    {
+                        Interval = 10000
+                    };
+                    timer.Elapsed += async (sender, _) =>
+                    {
+                        if (vChan.ConnectedUsers.Count == 1)
+                        {
+                            await arg.Channel.SendMessageAsync("No user left in the channel, ending radio...");
+                            await vChan.DisconnectAsync();
+                            timer.Enabled = false;
+                        }
+                    };
+                    timer.Start();
                     try
                     {
                         var audioClient = await guildUser.VoiceChannel.ConnectAsync();
