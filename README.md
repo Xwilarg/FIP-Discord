@@ -15,3 +15,11 @@ https://discord.com/oauth2/authorize?client_id=1062043607252606976&permissions=3
 | `stop`     | Stop playing the radio                                           |
 | `github`   | Get the link to the source code of the bot                       |
 | `invite`   | Get the invite link of the bot                                   |
+
+## Use the project from the source code
+ - Clone this repository
+ - Compile and create a Keys/ folder next to the executable
+ - Create a Credentials.json file with the following key-values:
+   - BotToken: The token of your bot
+   - OpenRadioApiToken: Your [Radio France API token](https://developers.radiofrance.fr/)
+   - LastFmApiToken: Your [last.fm API token](https://www.last.fm/api)
