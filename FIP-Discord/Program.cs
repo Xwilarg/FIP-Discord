@@ -187,7 +187,7 @@ namespace FIP
                     }
                     catch (Exception ex)
                     {
-                        await arg.Channel.SendMessageAsync(ex.Message);
+                        await arg.Channel.SendMessageAsync($"Unexpected error: {ex.Message}");
                         _followChans.Remove(arg.Channel.Id);
                         _audioChannels.Remove(arg.GuildId.Value);
                     }
