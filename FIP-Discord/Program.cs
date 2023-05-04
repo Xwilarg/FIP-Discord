@@ -151,6 +151,10 @@ namespace FIP
                     };
                     timer.Elapsed += async (sender, _) =>
                     {
+                        if (!_audioChannels.ContainsKey(arg.GuildId.Value)) // We already used the stop command to end the radio
+                        {
+                            return;
+                        }
                         if (vChan.ConnectedUsers.Count == 1)
                         {
                             await arg.Channel.SendMessageAsync("No user left in the channel, ending radio...");
@@ -207,6 +211,8 @@ namespace FIP
                 {
                     await arg.RespondAsync("Stopping the radio...");
                     await _audioChannels[arg.GuildId.Value].DisconnectAsync();
+                    _followChans.Remove(arg.Channel.Id);
+                    _audioChannels.Remove(arg.GuildId.Value);
                 }
             }
             else if (arg.CommandName == "github")
