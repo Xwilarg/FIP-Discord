@@ -1,6 +1,8 @@
 ﻿using Discord;
 using Discord.Audio;
 using Discord.WebSocket;
+using FIP_Discord;
+using System;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -22,7 +24,7 @@ namespace FIP
 
         private string _openRadioApiToken;
         private string _lastFmApiToken;
-        private HttpClient _http = new();
+        private readonly HttpClient _http = new();
 
         public async Task StartAsync()
         {
@@ -40,7 +42,13 @@ namespace FIP
             _openRadioApiToken = credentials.OpenRadioApiToken;
             _lastFmApiToken = credentials.LastFmApiToken;
 
-            _client.Ready += Ready;
+            // Init info for all FIPs
+            foreach (var fip in (FIPChannel[])Enum.GetValues(typeof(FIPChannel)))
+            {
+                _currentSong.Add(fip, null);
+            }
+
+                _client.Ready += Ready;
             _client.SlashCommandExecuted += SlashCommandExecuted;
 
             await _client.LoginAsync(TokenType.Bot, credentials.BotToken);
@@ -52,72 +60,82 @@ namespace FIP
             await Task.Delay(-1);
         }
 
-        private readonly Dictionary<ulong, IMessageChannel> _followChans = new();
+        private readonly Dictionary<ulong, (IMessageChannel MessageChannel, FIPChannel FIPChannel)> _followChans = new();
         private readonly Dictionary<ulong, SocketVoiceChannel> _audioChannels = new();
-        private Song? _currentSong;
+        private readonly Dictionary<FIPChannel, Song?> _currentSong = new();
         private void WatchOver()
         {
             while (Thread.CurrentThread.IsAlive)
             {
                 while (_followChans.Any())
                 {
-                    var previous = _currentSong?.end;
-                    UpdateCurrentSongAsync().GetAwaiter().GetResult();
-                    if (_currentSong != null && previous != _currentSong.end)
+                    foreach (var fip in _followChans.Select(x => x.Value.FIPChannel).Distinct())
                     {
-                        var embed = GetSongEmbedAsync().GetAwaiter().GetResult();
-                        foreach (var chan in _followChans)
+                        var song = _currentSong[fip];
+                        var previous = song?.end;
+                        UpdateCurrentSongAsync(fip).GetAwaiter().GetResult();
+                        if (_currentSong != null && previous != song.end)
                         {
-                            try
+                            foreach (var chan in _followChans)
                             {
-                                chan.Value.SendMessageAsync(embed: embed).GetAwaiter().GetResult();
+                                if (chan.Value.FIPChannel == fip) // TODO: Can prob be improved
+                                {
+                                    var embed = GetSongEmbedAsync(chan.Value.FIPChannel).GetAwaiter().GetResult();
+
+                                    try
+                                    {
+                                        chan.Value.MessageChannel.SendMessageAsync(embed: embed).GetAwaiter().GetResult();
+                                    }
+                                    catch { }
+                                }
                             }
-                            catch { }
                         }
                     }
+                    Thread.Sleep(10);
                 }
                 Thread.Sleep(200);
             }
         }
 
-        private async Task UpdateCurrentSongAsync()
+        private async Task UpdateCurrentSongAsync(FIPChannel fip)
         {
             TimeSpan t = DateTime.UtcNow - new DateTime(1970, 1, 1);
             int epochTime = (int)t.TotalSeconds;
-            if (_currentSong != null && _currentSong.end > epochTime)
+            if (_currentSong[fip] != null && _currentSong[fip].end > epochTime)
             {
                 return;
             }
             var json = JsonSerializer.Serialize(new GraphQL
             {
-                query = "{ live(station: FIP) { song { end, track {title albumTitle mainArtists} } } }"
+                query = "{ live(station: " + FIPChannelInfo.GetStationName(fip) + ") { song { end, track {title albumTitle mainArtists} } } }"
             });
 
             var answer = await _http.PostAsync($"https://openapi.radiofrance.fr/v1/graphql?x-token={_openRadioApiToken}", new StringContent(json, Encoding.UTF8, "application/json"));
             answer.EnsureSuccessStatusCode();
 
             var text = await answer.Content.ReadAsStringAsync();
-            _currentSong = JsonSerializer.Deserialize<GraphQLResult>(text).data.live.song;
+            _currentSong[fip] = JsonSerializer.Deserialize<GraphQLResult>(text).data.live.song;
         }
 
-        private async Task<Embed> GetSongEmbedAsync()
+        private async Task<Embed> GetSongEmbedAsync(FIPChannel fip)
         {
-            var lastFm = JsonSerializer.Deserialize<LastFm>(await _http.GetStringAsync($"https://ws.audioscrobbler.com/2.0/?method=track.getInfo&api_key={HttpUtility.UrlEncode(_lastFmApiToken)}&artist={_currentSong.track.mainArtists.FirstOrDefault()}&track={HttpUtility.UrlEncode(_currentSong.track.title)}&format=json"));
+            var song = _currentSong[fip];
+            var lastFm = JsonSerializer.Deserialize<LastFm>(await _http.GetStringAsync($"https://ws.audioscrobbler.com/2.0/?method=track.getInfo&api_key={HttpUtility.UrlEncode(_lastFmApiToken)}&artist={song.track.mainArtists.FirstOrDefault()}&track={HttpUtility.UrlEncode(song.track.title)}&format=json"));
             return new EmbedBuilder
             {
-                Title = $"{_currentSong.track.title} by {string.Join(", ", _currentSong.track.mainArtists)}",
+                Title = $"{song.track.title} by {string.Join(", ", song.track.mainArtists)}",
                 Fields = new()
                 {
                     new()
                     {
                         Name = "Album",
-                        Value = _currentSong.track.albumTitle,
+                        Value = song.track.albumTitle,
                         IsInline = true
                     },
                     new()
                     {
                         Name = "Ends",
-                        Value = $"<t:{_currentSong.end}:R>",
+                        Value = $"<t:{song.end}:R>",
                         IsInline = true
                     }
                 },
@@ -141,6 +159,7 @@ namespace FIP
                     await arg.RespondAsync("You must be in a voice channel to do this command", ephemeral: true);
                     return;
                 }
+                var channel = (FIPChannel)(arg.Data.Options.FirstOrDefault(x => x.Name == "channel")?.Value ?? FIPChannel.FIP);
                 await arg.RespondAsync("Starting the radio...");
                 _ = Task.Run(async () =>
                 {
@@ -165,17 +184,31 @@ namespace FIP
                         }
                     };
                     timer.Start();
-                    await UpdateCurrentSongAsync();
-                    await arg.Channel.SendMessageAsync(embed: await GetSongEmbedAsync());
-                    _followChans.Add(arg.Channel.Id, arg.Channel);
-                    _audioChannels.Add(arg.GuildId!.Value, vChan);
+                    await UpdateCurrentSongAsync(channel);
+                    await arg.Channel.SendMessageAsync(embed: await GetSongEmbedAsync(channel));
+                    if (_followChans.ContainsKey(arg.Channel.Id))
+                    {
+                        _followChans[arg.Channel.Id] = (arg.Channel, channel);
+                    }
+                    else
+                    {
+                        _followChans.Add(arg.Channel.Id, (arg.Channel, channel));
+                    }
+                    if (_audioChannels.ContainsKey(arg.GuildId!.Value))
+                    {
+                        _audioChannels[arg.GuildId!.Value] = vChan;
+                    }
+                    else
+                    {
+                        _audioChannels.Add(arg.GuildId!.Value, vChan);
+                    }
                     try
                     {
                         var audioClient = await guildUser.VoiceChannel.ConnectAsync();
                         var ffmpeg = Process.Start(new ProcessStartInfo
                         {
                             FileName = "ffmpeg",
-                            Arguments = $"-hide_banner -loglevel panic -i https://icecast.radiofrance.fr/fip-midfi.mp3 -ac 2 -f s16le -ar 48000 pipe:",
+                            Arguments = $"-hide_banner -loglevel panic -i {FIPChannelInfo.GetStreamFlux(channel)} -ac 2 -f s16le -ar 48000 pipe:",
                             UseShellExecute = false,
                             RedirectStandardOutput = true
                         });
@@ -238,7 +271,21 @@ namespace FIP
                         new()
                         {
                             Name = "play",
-                            Description = "Start playing the radio in the vocal channel where the user is"
+                            Description = "Start playing the radio in the vocal channel where the user is",
+                            Options = new()
+                            {
+                                new()
+                                {
+                                    Name = "channel",
+                                    Description = "FIP Channel to listen to",
+                                    IsRequired = false,
+                                    Choices = ((FIPChannel[])Enum.GetValues(typeof(FIPChannel))).Select(x => new ApplicationCommandOptionChoiceProperties()
+                                    {
+                                        Name = x.ToString(),
+                                        Value = (int)x
+                                    }).ToList()
+                                }
+                            }
                         },
                         new()
                         {
