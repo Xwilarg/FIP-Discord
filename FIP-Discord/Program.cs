@@ -2,7 +2,6 @@
 using Discord.Audio;
 using Discord.WebSocket;
 using FIP_Discord;
-using System;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -159,10 +158,11 @@ namespace FIP
                     await arg.RespondAsync("You must be in a voice channel to do this command", ephemeral: true);
                     return;
                 }
-                var channel = (FIPChannel)(arg.Data.Options.FirstOrDefault(x => x.Name == "channel")?.Value ?? FIPChannel.FIP);
+                var channel = (FIPChannel)Convert.ToInt32(arg.Data.Options.FirstOrDefault(x => x.Name == "channel")?.Value ?? 0);
                 await arg.RespondAsync("Starting the radio...");
                 _ = Task.Run(async () =>
                 {
+                    var fipChan = channel;
                     var vChan = (SocketVoiceChannel)guildUser.VoiceChannel;
                     var timer = new System.Timers.Timer()
                     {
@@ -218,17 +218,35 @@ namespace FIP
                         finally
                         {
                             await discord.FlushAsync();
-                            _followChans.Remove(arg.Channel.Id);
-                            _audioChannels.Remove(arg.GuildId.Value);
+                            if (_followChans.ContainsKey(arg.Channel.Id) && _followChans[arg.Channel.Id].FIPChannel == fipChan)
+                            {
+                                _followChans.Remove(arg.Channel.Id);
+                                _audioChannels.Remove(arg.GuildId.Value);
+                            }
                         }
                     }
                     catch (Exception ex)
                     {
                         await arg.Channel.SendMessageAsync($"Unexpected error: {ex.Message}");
-                        _followChans.Remove(arg.Channel.Id);
-                        _audioChannels.Remove(arg.GuildId.Value);
+                        if (_followChans.ContainsKey(arg.Channel.Id) && _followChans[arg.Channel.Id].FIPChannel == fipChan)
+                        {
+                            _followChans.Remove(arg.Channel.Id);
+                            _audioChannels.Remove(arg.GuildId.Value);
+                        }
                     }
                 });
+            }
+            else if (arg.CommandName == "program")
+            {
+                await arg.RespondAsync(embed: new EmbedBuilder
+                {
+                    Title = "Program",
+                    Description = string.Join("\n", ((FIPChannel[])Enum.GetValues(typeof(FIPChannel))).Select(x =>
+                    {
+                        UpdateCurrentSongAsync(x).GetAwaiter().GetResult();
+                        return $"{x}: {_currentSong[x].track.title} by {string.Join(", ", _currentSong[x].track.mainArtists)}";
+                    }))
+                }.Build());
             }
             else if (arg.CommandName == "stop")
             {
@@ -279,6 +297,7 @@ namespace FIP
                                     Name = "channel",
                                     Description = "FIP Channel to listen to",
                                     IsRequired = false,
+                                    Type = ApplicationCommandOptionType.Integer,
                                     Choices = ((FIPChannel[])Enum.GetValues(typeof(FIPChannel))).Select(x => new ApplicationCommandOptionChoiceProperties()
                                     {
                                         Name = x.ToString(),
@@ -286,6 +305,11 @@ namespace FIP
                                     }).ToList()
                                 }
                             }
+                        },
+                        new()
+                        {
+                            Name = "program",
+                            Description = "Display the various music currently playing on FIP"
                         },
                         new()
                         {
