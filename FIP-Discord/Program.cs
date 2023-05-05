@@ -70,9 +70,9 @@ namespace FIP
                 {
                     foreach (var fip in _followChans.Select(x => x.Value.FIPChannel).Distinct())
                     {
-                        var song = _currentSong[fip];
-                        var previous = song?.end;
+                        var previous = _currentSong[fip]?.end;
                         UpdateCurrentSongAsync(fip).GetAwaiter().GetResult();
+                        var song = _currentSong[fip];
                         if (song != null && previous != song.end)
                         {
                             foreach (var chan in _followChans)
@@ -85,10 +85,14 @@ namespace FIP
                                     {
                                         chan.Value.MessageChannel.SendMessageAsync(embed: embed).GetAwaiter().GetResult();
                                     }
-                                    catch { }
+                                    catch( Exception e){
+
+                                        Console.WriteLine($"ERR {e}");
+                                    }
                                 }
                             }
                         }
+                        Thread.Sleep(1000);
                     }
                     Thread.Sleep(10);
                 }
@@ -100,7 +104,7 @@ namespace FIP
         {
             TimeSpan t = DateTime.UtcNow - new DateTime(1970, 1, 1);
             int epochTime = (int)t.TotalSeconds;
-            if (_currentSong[fip] != null && _currentSong[fip].end > epochTime)
+            if (_currentSong[fip] != null && _currentSong[fip]!.end >= epochTime)
             {
                 return;
             }
@@ -114,6 +118,7 @@ namespace FIP
 
             var text = await answer.Content.ReadAsStringAsync();
             _currentSong[fip] = JsonSerializer.Deserialize<GraphQLResult>(text).data.live.song;
+            Console.WriteLine($"Updated song for {fip}: {(_currentSong[fip] == null ? "No data" : _currentSong[fip].track.title)}");
         }
 
         private async Task<Embed> GetSongEmbedAsync(FIPChannel fip)
@@ -140,7 +145,11 @@ namespace FIP
                 },
                 ImageUrl = lastFm?.track?.album?.image?.LastOrDefault()?.text,
                 Url = lastFm?.track?.url,
-                Color = new(227, 0, 123)
+                Color = new(227, 0, 123),
+                Footer = new()
+                {
+                    Text = $"You are listening to {fip}"
+                }
             }.Build();
         }
 
@@ -244,6 +253,10 @@ namespace FIP
                     Description = string.Join("\n", ((FIPChannel[])Enum.GetValues(typeof(FIPChannel))).Select(x =>
                     {
                         UpdateCurrentSongAsync(x).GetAwaiter().GetResult();
+                        if (_currentSong[x] == null)
+                        {
+                            return $"{x}: No data";
+                        }
                         return $"{x}: {_currentSong[x].track.title} by {string.Join(", ", _currentSong[x].track.mainArtists)}";
                     })),
                     Color = new(227, 0, 123)
