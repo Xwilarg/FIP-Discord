@@ -73,7 +73,7 @@ namespace FIP
                         var song = _currentSong[fip];
                         var previous = song?.end;
                         UpdateCurrentSongAsync(fip).GetAwaiter().GetResult();
-                        if (_currentSong != null && previous != song.end)
+                        if (song != null && previous != song.end)
                         {
                             foreach (var chan in _followChans)
                             {
@@ -218,7 +218,7 @@ namespace FIP
                         finally
                         {
                             await discord.FlushAsync();
-                            if (_followChans.ContainsKey(arg.Channel.Id) && _followChans[arg.Channel.Id].FIPChannel == fipChan)
+                            if (_followChans.TryGetValue(arg.Channel.Id, out (IMessageChannel MessageChannel, FIPChannel FIPChannel) value) && value.FIPChannel == fipChan)
                             {
                                 _followChans.Remove(arg.Channel.Id);
                                 _audioChannels.Remove(arg.GuildId.Value);
@@ -228,7 +228,7 @@ namespace FIP
                     catch (Exception ex)
                     {
                         await arg.Channel.SendMessageAsync($"Unexpected error: {ex.Message}");
-                        if (_followChans.ContainsKey(arg.Channel.Id) && _followChans[arg.Channel.Id].FIPChannel == fipChan)
+                        if (_followChans.TryGetValue(arg.Channel.Id, out (IMessageChannel MessageChannel, FIPChannel FIPChannel) value) && value.FIPChannel == fipChan)
                         {
                             _followChans.Remove(arg.Channel.Id);
                             _audioChannels.Remove(arg.GuildId.Value);
@@ -245,7 +245,8 @@ namespace FIP
                     {
                         UpdateCurrentSongAsync(x).GetAwaiter().GetResult();
                         return $"{x}: {_currentSong[x].track.title} by {string.Join(", ", _currentSong[x].track.mainArtists)}";
-                    }))
+                    })),
+                    Color = new(227, 0, 123)
                 }.Build());
             }
             else if (arg.CommandName == "stop")
