@@ -8,7 +8,11 @@
         ROCK,
         METAL,
         WORLD,
-        GROOVE
+        GROOVE,
+        REGGAE,
+        ELECTRO,
+        HIP_HOP,
+        NOUVEAUTES
     }
 
     public static class FIPChannelInfo
@@ -18,7 +22,7 @@
             return fip switch
             {
                 FIPChannel.FIP => "https://icecast.radiofrance.fr/fip-midfi.mp3",
-                _ => $"https://icecast.radiofrance.fr/fip{fip.ToString().ToLowerInvariant()}-midfi.mp3"
+                _ => $"https://icecast.radiofrance.fr/fip{fip.ToString().ToLowerInvariant().Replace("_", "")}-midfi.mp3"
             };
         }
 
