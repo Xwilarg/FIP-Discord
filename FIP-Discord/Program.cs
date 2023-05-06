@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Web;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace FIP
 {
@@ -87,7 +88,7 @@ namespace FIP
                                     }
                                     catch( Exception e){
 
-                                        Console.WriteLine($"ERR {e}");
+                                        Log.LogErrorAsync(e).GetAwaiter().GetResult();
                                     }
                                 }
                             }
@@ -118,7 +119,7 @@ namespace FIP
 
             var text = await answer.Content.ReadAsStringAsync();
             _currentSong[fip] = JsonSerializer.Deserialize<GraphQLResult>(text).data.live.song;
-            Console.WriteLine($"Updated song for {fip}: {(_currentSong[fip] == null ? "No data" : _currentSong[fip].track.title)}");
+            await Log.LogAsync(new LogMessage(LogSeverity.Info, "Song Updater", $"Updated song for {fip}: {(_currentSong[fip] == null ? "No data" : _currentSong[fip].track.title)}"));
         }
 
         private async Task<Embed> GetSongEmbedAsync(FIPChannel fip)
@@ -224,19 +225,25 @@ namespace FIP
                         using var output = ffmpeg.StandardOutput.BaseStream;
                         using var discord = audioClient.CreatePCMStream(AudioApplication.Mixed);
                         try { await output.CopyToAsync(discord); }
+                        catch (Exception ex)
+                        {
+                            await Log.LogErrorAsync(ex);
+                        }
                         finally
                         {
                             await discord.FlushAsync();
-                            if (_followChans.TryGetValue(arg.Channel.Id, out (IMessageChannel MessageChannel, FIPChannel FIPChannel) value) && value.FIPChannel == fipChan)
-                            {
-                                _followChans.Remove(arg.Channel.Id);
-                                _audioChannels.Remove(arg.GuildId.Value);
-                            }
                         }
+                    }
+                    catch (TaskCanceledException)
+                    {
+                        await arg.Channel.SendMessageAsync("Failed to connect to the text channel, please make sure I have the right permissions");
                     }
                     catch (Exception ex)
                     {
-                        await arg.Channel.SendMessageAsync($"Unexpected error: {ex.Message}");
+                        await Log.LogErrorAsync(ex);
+                    }
+                    finally
+                    {
                         if (_followChans.TryGetValue(arg.Channel.Id, out (IMessageChannel MessageChannel, FIPChannel FIPChannel) value) && value.FIPChannel == fipChan)
                         {
                             _followChans.Remove(arg.Channel.Id);
