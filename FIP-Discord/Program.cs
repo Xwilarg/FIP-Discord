@@ -174,7 +174,7 @@ namespace FIP
                         };
                         disconnectTimer.Elapsed += (sender, _) =>
                         {
-                            throw new InvalidOperationException("Coun't disconnect from vocal channel");
+                            throw new InvalidOperationException("Couldn't disconnect from vocal channel");
                         };
                         disconnectTimer.Start();
                         while (_audioChannels.Any(x => x.Key == vChan.Id))
