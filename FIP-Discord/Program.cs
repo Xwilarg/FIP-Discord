@@ -6,7 +6,6 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Web;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace FIP
 {
@@ -126,24 +125,16 @@ namespace FIP
         {
             var song = _currentSong[fip];
             var lastFm = JsonSerializer.Deserialize<LastFm>(await _http.GetStringAsync($"https://ws.audioscrobbler.com/2.0/?method=track.getInfo&api_key={HttpUtility.UrlEncode(_lastFmApiToken)}&artist={song.track.mainArtists.FirstOrDefault()}&track={HttpUtility.UrlEncode(song.track.title)}&format=json"));
+            List<EmbedFieldBuilder> fields = new();
+            if (song.track.albumTitle != null)
+            {
+                fields.Add(new EmbedFieldBuilder { Name = "Album", Value = song.track.albumTitle, IsInline = true });
+            }
+            fields.Add(new EmbedFieldBuilder { Name = "Ends", Value = $"<t:{song.end}:R>", IsInline = true });
             return new EmbedBuilder
             {
                 Title = $"{song.track.title} by {string.Join(", ", song.track.mainArtists)}",
-                Fields = new()
-                {
-                    new()
-                    {
-                        Name = "Album",
-                        Value = song.track.albumTitle,
-                        IsInline = true
-                    },
-                    new()
-                    {
-                        Name = "Ends",
-                        Value = $"<t:{song.end}:R>",
-                        IsInline = true
-                    }
-                },
+                Fields = fields,
                 ImageUrl = lastFm?.track?.album?.image?.LastOrDefault()?.text,
                 Url = lastFm?.track?.url,
                 Color = new(227, 0, 123),
@@ -174,6 +165,22 @@ namespace FIP
                 {
                     var fipChan = channel;
                     var vChan = (SocketVoiceChannel)guildUser.VoiceChannel;
+                    if (_audioChannels.Any(x => x.Key == vChan.Id))
+                    {
+                        await vChan.DisconnectAsync();
+                        var disconnectTimer = new System.Timers.Timer()
+                        {
+                            Interval = 2000
+                        };
+                        disconnectTimer.Elapsed += (sender, _) =>
+                        {
+                            throw new InvalidOperationException("Coun't disconnect from vocal channel");
+                        };
+                        disconnectTimer.Start();
+                        while (_audioChannels.Any(x => x.Key == vChan.Id))
+                        { }
+                        disconnectTimer.Enabled = false;
+                    }
                     var timer = new System.Timers.Timer()
                     {
                         Interval = 10000
@@ -244,11 +251,8 @@ namespace FIP
                     }
                     finally
                     {
-                        if (_followChans.TryGetValue(arg.Channel.Id, out (IMessageChannel MessageChannel, FIPChannel FIPChannel) value) && value.FIPChannel == fipChan)
-                        {
-                            _followChans.Remove(arg.Channel.Id);
-                            _audioChannels.Remove(arg.GuildId.Value);
-                        }
+                        _followChans.Remove(arg.Channel.Id);
+                        _audioChannels.Remove(arg.GuildId.Value);
                     }
                 });
             }
